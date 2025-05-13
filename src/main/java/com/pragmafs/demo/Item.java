@@ -1,24 +1,25 @@
 package com.pragmafs.demo;
 
-class Item {
+import reactor.util.annotation.NonNull;
+
+record Item(String id, int value, Source source) {
 
     public enum Source { SNAP, UPDATE }
-    final String id;
-    int value;
 
-    final Source source;
-    Item(String id, int value, Source source) {
-        this.id = id;
-        this.value = value;
-        this.source = source;
+    @NonNull
+    public Item withValue(int newValue) {
+        return new Item(this.id, newValue, this.source);
     }
+
+    @NonNull
+    public Item withValueAndSource(int newValue, Source source) {
+        return new Item(this.id, newValue, source);
+    }
+
 
     @Override
-    public String toString() {
-        return "{%s -> %d} %s %s".formatted(id, value, source, super.toString());
-    }
-
-    public String getId() {
-        return id;
+     @NonNull
+     public String toString() {
+        return String.format("Item{id='%s', value=%d, source=%s}", id, value, source);
     }
 }

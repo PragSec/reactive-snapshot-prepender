@@ -43,8 +43,6 @@ public class DemoApplication implements CommandLineRunner {
 	@Override
 	public void run(String... args) {
 
-		InMemoryTableStore cache = new InMemoryTableStore();
-
 		// Create a fan-out hot source
 		Sinks.Many<Item> sink = Sinks.many().multicast().directBestEffort();
 
@@ -56,12 +54,18 @@ public class DemoApplication implements CommandLineRunner {
 		items.subscribe(sink::tryEmitNext);
 
 		// Feed the cache from the hot flux
+		InMemoryTableStore cache = new InMemoryTableStore();
 		sink.asFlux()
 			.subscribeOn(Schedulers.newSingle("cacher"))
 			.subscribe(cache::upsert);
 
+
 		// Pause to let the cache fill up - we start subscription sequence at some arbitrary point in the stream
-		nap(1);
+		Random random = new Random();
+		long sleepMillis = random.nextLong(1, 3);
+		nap(sleepMillis);
+
+		log.info("Cache has {} items after {} millis sleep", cache.size(), sleepMillis);
 
 		Flux<Item> snapshot = cache.select();
 
@@ -69,10 +73,17 @@ public class DemoApplication implements CommandLineRunner {
 
 		startTime = System.nanoTime();
 
-		Flux<Item> merged = new SnapshotPrepender<>(snapshot, updates).asFlux()
-//		Flux<Item> merged = Flux.mergeSequential(snapshot, updates)
-//		Flux<Item> merged = Flux.concat(snapshot, updates)
-			.doOnNext(this::checkForErrors);
+		Flux<Item> merged = new LimitedSizeSnapshotPrependerWithComposition(snapshot, updates, 400_000).asFlux().doOnNext(this::checkForErrors);
+
+//		Flux<Item> merged = SnapshotPrepender.<Item>builder()
+//				.snapshot(snapshot)
+//				.updates(updates)
+//				.backpressure(SnapshotPrepender.BackpressureStrategy.BUFFER)
+//				.skipIfSeenInSnapshot(true) // skip updates seen in snapshot
+//				.snapshotSchedulerSupplier(() -> Schedulers.newSingle("snapshot-scheduler"))
+//				.build()
+//				.asFlux()
+//				.doOnNext(this::checkForErrors);
 
 		var subscription = merged.subscribe();
 
@@ -90,31 +101,40 @@ public class DemoApplication implements CommandLineRunner {
 	 * Also logs progress (every 10,000th emitted item), and check
 	 */
 	private void checkForErrors(Item item) {
-		if (item.source == SNAP) {
+		if (item.source() == SNAP) {
+			if (lastSnapshot == null) {
+				log.info("First snapshot is {}", item);
+			}
+
 			if (lastUpdate != null) {
 				log.warn(">>> Received snapshot {} after update {}", item, lastUpdate);
 			}
-			if (lastSnapshot == null || (lastSnapshot.value < item.value)) {
+
+			if (lastSnapshot == null || (lastSnapshot.value() < item.value())) {
 				lastSnapshot = item;
 			}
 		} else {
 			// UPDATE
+			//log.info("Update is {}", item);
+			// First update after snapshot
 			if (lastUpdate == null && lastSnapshot != null) {
 				log.info("Snapshot (last) is {}", lastSnapshot);
 				log.info("Update (first) is {}", item);
-				if (item.value > lastSnapshot.value + 1) {
+				if (item.value() > lastSnapshot.value() + 1) {
 					log.warn(">>> GAP between last snapshot {} and first update {}", lastSnapshot, item);
 				}
- 			}
-			if (lastUpdate != null && item.value != lastUpdate.value + 1) {
+ 			}  else if (lastUpdate == null) {	// first update, no snapshot
+				log.info("First update is {}", item);
+			} else if (item.value() != lastUpdate.value() + 1) {
 				log.warn(">>> GAP between update {} and {}", lastUpdate, item);
 			}
+
 			lastUpdate = item;
 		}
-		if (item.value % 10_000 == 0) {
+		if (item.value() % 10_000 == 0) {
 			log.info("Merged {}", item);
 		}
-		if (item.value == COUNT) {
+		if (item.value() == COUNT) {
 			long endTime = System.nanoTime();
 			log.info("Elapsed = {}", (endTime - startTime)/1e6);
 			log.info("Last item was {}", lastUpdate);
@@ -124,6 +144,9 @@ public class DemoApplication implements CommandLineRunner {
 	private void nap(long ms) {
 		try {
 			Thread.sleep(ms);
-		} catch (InterruptedException e) { }
+		} catch (InterruptedException e) {
+			log.error("Interrupted", e);
+			Thread.currentThread().interrupt();
+		}
 	}
 }

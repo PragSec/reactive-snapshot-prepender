@@ -2,6 +2,7 @@ package com.pragmafs.demo;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import reactor.util.annotation.NonNull;
 
 import java.util.Arrays;
 import java.util.Iterator;
@@ -22,6 +23,8 @@ class Partition implements Iterable<Item> {
     int size() {
         return lastIdx + 1;
     }
+
+    boolean isEmpty() {return lastIdx == -1;}
 
     Item get(int idx) {
         if (idx > lastIdx)
@@ -47,6 +50,7 @@ class Partition implements Iterable<Item> {
     }
 
     @Override
+    @NonNull
     public Iterator<Item> iterator() {
         return new Iterator<>() {
 

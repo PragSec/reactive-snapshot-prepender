@@ -2,138 +2,320 @@ package com.pragmafs.demo;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.lang.NonNull;
 import reactor.core.Disposable;
+import reactor.core.publisher.ConnectableFlux;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.Sinks;
+import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 
-import java.util.ArrayDeque;
-import java.util.Deque;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
 
-// TODO: - think through error handling, is tryEmitNext the right thing?
 /**
- * Constructs a snapshot prepender from two fluxes: the snapshot to be prepended
- * and the never-ending stream of updates to follow. It's called "prepender"
- * to emphasize that the updates are subscribed first but the snapshot emitted
- * first, followed by the updates. The purpose is to ensure there are no
- * missed elements from the hot update stream after snapshot state but before
- * the start of the updates.
+ * SnapshotPrepender is a utility class that allows you to prepend a snapshot of items to a stream of updates.
+ * <p>
+ * It does this by taking a snapshot of the items in the snapshot stream and then concatenating it with the
+ * hot updates stream in 3 distinct phases:
+ * <p>
+ * The snapshot phase takes items from the cold snapshot stream.
+ * The buffered updates phase TAKES items from the updates stream UNTIL the snapshot phase is completed.
+ * The live updates phase SKIPS items from the updates stream UNTIL the snapshot phase is completed.
+ * <p>
+ * Concatenating the three phases produces the final stream.
  *
- * <p>Threading:
- *
- * <p>The updates subscribes (and is assumed to publish) on the default/immediate scheduler
- * of the subscriber (who calls subscribe on the flux returned from onFlux()).
- *
- * <p>The snapshot is subscribed and publishes on a new Scheduler.parallel() (TODO: provide scheduler to use in the constructor?)
- * This is a short-lived process that emits the snapshot, followed by the updates emitted and buffered
- * during the snapshot.
- *
- * TODO - test out what .publishOn and .subscribeOn do when added to the output flux - if they don't propagate
- *   up is it adequate?
- *
- * <p>After the snapshot and buffered rows are emitted,
+ * @param <T>
  */
 public class SnapshotPrepender<T> {
+    public enum BackpressureStrategy {
+        ERROR,
+        BUFFER,
+        DROP,
+        LATEST
+    }
 
-    private static final Logger log = LoggerFactory.getLogger(SnapshotPrepender.class);
-    private final Flux<T> snapshot;
-    private final Flux<T> updates;
-    private final Sinks.Many<T> sink;
-    private volatile Deque<T> buffer = new ArrayDeque<>();
-    private final Lock lock = new ReentrantLock();
-    private Disposable updateSubscription;
-    private Disposable snapshotSubscription;
+    public static class Builder<T> {
+        private Flux<T> snapshot;
+        private Flux<T> updates;
+        private Supplier<Scheduler> snapshotSchedulerSupplier;
+        private BackpressureStrategy backpressureStrategy;
+        private Boolean skipIfSeenInSnapshot;
+        private Predicate<T> snapshotEventFilter;
+        private Predicate<T> updateEventFilter;
 
-    public SnapshotPrepender(Flux<T> snapshot, Flux<T> updates) {
+        /**
+         * Sets the snapshot stream. This is a cold stream that will be connected to the updates stream.
+         *
+         * @param snapshot Snapshot stream. This is a cold stream that will be streamed before the updates stream.
+         * @return this
+         */
+        public Builder<T> snapshot(Flux<T> snapshot) {
+            this.snapshot = snapshot;
+            return this;
+        }
+
+        /**
+         * Updates stream to prepend to the snapshot.
+         *
+         * @param updates Updates stream. This is a hot stream that will be streamed after the snapshot stream.
+         * @return this
+         */
+        public Builder<T> updates(Flux<T> updates) {
+            this.updates = updates;
+            return this;
+        }
+
+        /**
+         * Scheduler supplier to use for the snapshot phase.
+         *
+         * @param schedulerSupplier Scheduler supplier. Default is a new single-threaded scheduler.
+         * @return this
+         */
+        public Builder<T> snapshotSchedulerSupplier(Supplier<Scheduler> schedulerSupplier) {
+            this.snapshotSchedulerSupplier = schedulerSupplier;
+            return this;
+        }
+
+        /**
+         * Skip items that were seen in the snapshot phase.
+         *
+         * @param skipIfSeenInSnapshot If true, skip update stream items that were seen in the snapshot phase. Default is false.
+         * @return this
+         */
+        public Builder<T> skipIfSeenInSnapshot(boolean skipIfSeenInSnapshot) {
+            this.skipIfSeenInSnapshot = skipIfSeenInSnapshot;
+            return this;
+        }
+
+        /**
+         * Sets the backpressure strategy.
+         *
+         * @param strategy Backpressure strategy. Default is BUFFER.
+         * @return this
+         */
+        public Builder<T> backpressure(BackpressureStrategy strategy) {
+            this.backpressureStrategy = strategy;
+            return this;
+        }
+
+        /**
+         * Sets the snapshot event filter.
+         *
+         * @param snapshotEventFilter Filter for snapshot events.
+         * @return this
+         */
+        public Builder<T> snapshotEventFilter(Predicate<T> snapshotEventFilter) {
+            this.snapshotEventFilter = snapshotEventFilter;
+            return this;
+        }
+
+        /**
+         * Sets the update event filter.
+         *
+         * @param updateEventFilter Filter for update events.
+         * @return this
+         */
+        public Builder<T> updateEventFilter(Predicate<T> updateEventFilter) {
+            this.updateEventFilter = updateEventFilter;
+            return this;
+        }
+
+        /**
+         * Builds the SnapshotPrepender.
+         *
+         * @return SnapshotPrepender instance.
+         */
+        public SnapshotPrepender<T> build() {
+            Objects.requireNonNull(snapshot, "Snapshot stream must not be null");
+            Objects.requireNonNull(updates, "Updates stream must not be null");
+            return new SnapshotPrepender<>(snapshot, updates, backpressureStrategy, snapshotSchedulerSupplier, skipIfSeenInSnapshot, snapshotEventFilter, updateEventFilter);
+        }
+    }
+
+    /**
+     * @param <T> Type of the items in the snapshot and updates streams.
+     * @return A builder for creating a SnapshotPrepender.
+     */
+    public static <T> Builder<T> builder() {
+        return new Builder<>();
+    }
+
+    /**
+     * Private constructor to prevent instantiation without using the builder.
+     *
+     * @param snapshot                  Snapshot stream. This is a cold stream that will be streamed before the updates stream.
+     * @param updates                   Updates stream. This is a hot stream that will be streamed after the snapshot stream.
+     * @param backpressureStrategy      Backpressure strategy. Default is BUFFER.
+     * @param snapshotSchedulerSupplier Scheduler supplier. Default is a new single-threaded scheduler.
+     * @param skipIfSeenInSnapshot      If true, skip update stream items that were seen in the snapshot phase. Default is false.
+     */
+    protected SnapshotPrepender(@NonNull Flux<T> snapshot,
+                                @NonNull Flux<T> updates,
+                                BackpressureStrategy backpressureStrategy,
+                                Supplier<Scheduler> snapshotSchedulerSupplier,
+                                Boolean skipIfSeenInSnapshot,
+                                Predicate<T> snapshotEventFilter,
+                                Predicate<T> updateEventFilter) {
         this.snapshot = snapshot;
         this.updates = updates;
-        // this.sink = Sinks.unsafe().many().unicast().onBackpressureError();
-        this.sink = Sinks.many().unicast().onBackpressureError();
+        this.snapshotSchedulerSupplier = snapshotSchedulerSupplier != null ? snapshotSchedulerSupplier.get() : Schedulers.newSingle("snapshot");
+        this.backpressureStrategy = backpressureStrategy != null ? backpressureStrategy : BackpressureStrategy.BUFFER;
+        this.skipIfSeenInSnapshot = skipIfSeenInSnapshot != null ? skipIfSeenInSnapshot : false;
+        this.snapshotEventFilter = snapshotEventFilter != null ? snapshotEventFilter : t -> true;
+        this.updateEventFilter = updateEventFilter != null ? updateEventFilter : t -> true;
     }
 
     /**
-     * Returns the combined flux containing the snapshot followed by
-     * never-ending stream of updates.
+     * Builds the snapshot phase.
+     *
+     * @param seenInSnapshot Set of items seen in the snapshot phase. This is used to skip items that were seen in the snapshot phase if skipping is enabled.
+     * @return The snapshot phase.
      */
-    Flux<T> asFlux() {
-        return sink.asFlux()
-            .doOnSubscribe(sub -> subscribe())
-            .doOnCancel(() -> {
-                if (updateSubscription != null) {
-                    updateSubscription.dispose();
-                }
-                if (snapshotSubscription != null) {
-                    snapshotSubscription.dispose();
-                }
-            });
-    }
-
-    public void subscribe() {
-        updateSubscription = updates
-            .doOnSubscribe(x -> log.info("Updates subscribed"))
-            .subscribe(t -> {
-                lock.lock();
-                try {
-                    if (buffer == null) {
-                        emitUpdateMaybe(t);
-                    } else {
-                        buffer.add(t);
-                    }
-                } finally {
-                    lock.unlock();
-                }
-            });
-
-        snapshotSubscription = snapshot
-            .doOnSubscribe(x -> log.info("Snapshot subscribed"))
-            .doOnComplete(this::flushBuffer)
-            .subscribeOn(Schedulers.newSingle("snapshot"))
-            .subscribe(this::emitSnapshotMaybe);
-    }
-
-    private void flushBuffer() {
-        int n = 0;
-        log.info("Snapshot completed");
-        lock.lock();
-        try {
-            T t;
-            while ((t = buffer.poll()) != null) {
-                emitUpdateMaybe(t);
-                n++;
-            }
-            buffer = null;
-        } finally {
-            lock.unlock();
-        }
-        log.info("Buffer of {} flushed", n);
+    @NonNull
+    protected Flux<T> buildSnapshotPhase(@NonNull Set<T> seenInSnapshot) {
+        return snapshot
+                .subscribeOn(snapshotSchedulerSupplier)
+                .filter(snapshotEventFilter)
+                .doOnNext(t -> {
+                    if (skipIfSeenInSnapshot) seenInSnapshot.add(t);
+                }).doOnComplete(() ->
+                        log.info("Snapshot completed")
+                ).doOnError(e ->
+                        log.error("Snapshot error", e)
+                );
     }
 
     /**
-     * Emits a snapshot item, maybe. This is a hook for creating
-     * filtering behavior through overriding in a subclass. Base class behavior
-     * is always to emit.
+     * Builds the buffered updates phase. This phase takes items from the updates stream UNTIL the snapshot phase is completed.
+     *
+     * @param seenInSnapshot Set of items seen in the snapshot phase. This is used to skip items that were seen in the snapshot phase if skipping is enabled.
+     * @param hotUpdates     The hot updates stream. This will be streamed after the snapshot stream.
+     * @return The buffered updates phase.
      */
-    protected void emitSnapshotMaybe(T t) {
-        tryEmitNext(t);
-        // log.info("Snapshot emit {}", t);
+    @NonNull
+    protected Flux<T> buildBufferedUpdates(@NonNull Set<T> seenInSnapshot, @NonNull Flux<T> hotUpdates) {
+        return hotUpdates
+                // take events until the snapshot phase is completed
+                .takeUntilOther(snapshot.ignoreElements().then())
+                .filter(t -> !skipIfSeenInSnapshot || !seenInSnapshot.contains(t))
+                .filter(updateEventFilter)
+                .doOnComplete(() ->
+                        log.info("Buffered updates completed")
+                ).doOnError(e ->
+                        log.error("Buffered updates error", e)
+                );
     }
 
     /**
-     * Emits an update item, maybe. This is a hook for creating
-     * filtering behavior through overriding in a subclass. Base class behavior
-     * is always to emit.
+     * Builds the live updates phase. This phase takes items from the updates stream AFTER the snapshot phase is completed.
+     *
+     * @param seenInSnapshot Set of items seen in the snapshot phase. This is used to skip items that were seen in the snapshot phase if skipping is enabled.
+     * @param hotUpdates     The hot updates stream. This will be streamed after the snapshot stream.
+     * @return The live updates phase.
      */
-    protected void emitUpdateMaybe(T t) {
-        tryEmitNext(t);
+    @NonNull
+    protected Flux<T> buildLiveUpdates(@NonNull Set<T> seenInSnapshot, @NonNull Flux<T> hotUpdates) {
+        return hotUpdates
+                // skip events until the snapshot phase is completed
+                .skipUntilOther(snapshot.ignoreElements().then())
+                .filter(t -> !skipIfSeenInSnapshot || !seenInSnapshot.contains(t))
+                .filter(updateEventFilter)
+                .doOnComplete(() ->
+                        log.info("Live updates completed")
+                ).doOnError(e ->
+                        log.error("Live updates error", e)
+                );
     }
 
     /**
-     * Emits an item to the subscriber, for use by derived classes.
+     * This method is called after the snapshot phase is built, but before the updates are added.
+     * It allows subclasses to modify the snapshot phase before it is concatenated with the updates.
+     *
+     * @param snapshotPhase The snapshot phase built from the snapshot stream.
+     * @return The modified snapshot phase.
      */
-    protected void tryEmitNext(T t) {
-        sink.tryEmitNext(t);
+    @NonNull
+    protected Flux<T> afterSnapshotPhaseBuilt(@NonNull Flux<T> snapshotPhase) {
+        return snapshotPhase; // subclasses can override and modify
     }
 
+    /**
+     * This method is called after the buffered updates phase is built, but before the live updates are added.
+     * It allows subclasses to modify the buffered updates phase before it is concatenated with the live updates.
+     *
+     * @param bufferedUpdatesPhase The buffered updates phase built from the updates stream.
+     * @return The modified buffered updates phase.
+     */
+    @NonNull
+    protected Flux<T> afterBufferedUpdatesPhaseBuilt(@NonNull Flux<T> bufferedUpdatesPhase) {
+        return bufferedUpdatesPhase; // subclasses can override and modify
+    }
+
+    /**
+     * This method is called after the live updates phase is built. It allows subclasses to modify the live updates phase before it is concatenated with the live updates.
+     *
+     * @param liveUpdatesPhase The buffered updates phase built from the updates stream.
+     * @return The modified buffered updates phase.
+     */
+    @NonNull
+    protected Flux<T> afterLiveUpdatesPhaseBuilt(@NonNull Flux<T> liveUpdatesPhase) {
+        return liveUpdatesPhase; // subclasses can override and modify
+    }
+
+    /**
+     * Sets the snapshot filter. This is used to filter items in the snapshot phase.
+     *
+     * @param filter The filter to use for the snapshot phase.
+     */
+    protected void setSnapshotFilter(Predicate<T> filter) {
+        this.snapshotEventFilter = filter != null ? filter : t -> true;
+    }
+
+    /**
+     * Sets the update filter. This is used to filter items in the updates phase.
+     *
+     * @param filter The filter to use for the updates phase.
+     */
+    protected void setUpdateFilter(Predicate<T> filter) {
+        this.updateEventFilter = filter != null ? filter : t -> true;
+    }
+
+    public Flux<T> asFlux() {
+        // Turn updates into a replayable hot stream
+        ConnectableFlux<T> hotUpdates = updates.replay();
+        Disposable connection = hotUpdates.connect(); // Start capturing immediately, even if we don't subscribe yet
+
+        Set<T> seenInSnapshot = ConcurrentHashMap.newKeySet();
+
+        Flux<T> snapshotPhase = afterSnapshotPhaseBuilt(buildSnapshotPhase(seenInSnapshot));
+        Flux<T> bufferedUpdates = afterBufferedUpdatesPhaseBuilt(buildBufferedUpdates(seenInSnapshot, hotUpdates));
+        Flux<T> liveUpdates = afterLiveUpdatesPhaseBuilt(buildLiveUpdates(seenInSnapshot, hotUpdates));
+
+        Flux<T> merged = Flux.concat(snapshotPhase, bufferedUpdates, liveUpdates)
+                .doFinally(signalType -> {
+                    connection.dispose();
+                    snapshotSchedulerSupplier.dispose();
+                    log.info("SnapshotPrepender stream finished with signal: {}", signalType);
+                });
+        return switch (backpressureStrategy) {
+            case DROP -> merged.onBackpressureDrop();
+            case BUFFER -> merged.onBackpressureBuffer();
+            default -> merged.onBackpressureError();
+        };
+    }
+
+    private static final Logger log = LoggerFactory.getLogger(SnapshotPrepender.class);
+
+    private final Flux<T> snapshot;
+    private final Flux<T> updates;
+    private final Scheduler snapshotSchedulerSupplier;
+    private final BackpressureStrategy backpressureStrategy;
+    private final boolean skipIfSeenInSnapshot;
+    private volatile Predicate<T> snapshotEventFilter;
+    private volatile Predicate<T> updateEventFilter;
 }
+
+

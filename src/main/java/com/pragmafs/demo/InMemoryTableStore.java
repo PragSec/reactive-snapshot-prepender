@@ -13,12 +13,12 @@ import static com.pragmafs.demo.Item.Source.SNAP;
 
 /**
  * In-memory HashMap store of Rows. Supports optional partition index.
- *
+ * <p>
  * Impl note:
  * All rows are stored in the flat table. In addition, for a partitioned table, each partition is stored as an index
  * pointing to the same row objects, to efficiently service partition snapshot requests.
  * Note we assume the partition value never changes; if it did we'd have to deal with it appropriately in upsert.
- *
+ * <p>
  * Threading impl note:
  * - rows map is only used from upsert, never select, so it's safe
  * - partitions is ConcurrentHashMap, so safe for concurrent writer & readers
@@ -28,8 +28,8 @@ import static com.pragmafs.demo.Item.Source.SNAP;
  */
 public class InMemoryTableStore {
 
-    private Map<String, Item> rows; // map from id to Item to service updates
-    private Partition allPartition; // "all" partition for non-partitioned tables to service selects
+    private final Map<String, Item> rows; // map from id to Item to service updates
+    private final Partition allPartition; // "all" partition for non-partitioned tables to service selects
     private final Logger logger = LoggerFactory.getLogger(InMemoryTableStore.class);
 
     InMemoryTableStore() {
@@ -41,19 +41,22 @@ public class InMemoryTableStore {
         if (update == null)
             return Mono.empty();
 
-        Item row = rows.get(update.getId());
-        if (row == null) {
-            createAndIndex(update);
-        } else {
-            updateRow(update, row);
-        }
+        rows.merge(update.id(), createAndIndex(update), (oldItem, newItem) -> oldItem.withValue(newItem.value()));
+//
+//        Item row = rows.get(update.getId());
+//        if (row == null) {
+//            createAndIndex(update);
+//        } else {
+//            updateRow(update, row);
+//        }
         return Mono.just(update);
     }
 
     Flux<Item> select() {
         Partition part = allPartition;
-        if (part == null || part.size() == 0)
+        if (part.isEmpty())
             return Flux.empty();
+
         return Flux.create(sink -> {
             Iterator<Item> iterator = part.iterator();
             sink.onRequest(n -> {
@@ -69,28 +72,32 @@ public class InMemoryTableStore {
         });
     }
 
+    int size() {
+        return allPartition.size();
+    }
+
     /**
      * Creates and a new row for the given update and indexes it.
      */
-    private void createAndIndex(Item update) {
-        Item row = createRow(update);
-        rows.put(row.getId(), row);
+    private Item createAndIndex(Item update) {
+        Item row = createSnapRow(update);
         allPartition.add(row);
+        return row;
     }
 
     /**
      * Create a new Item to represent the update.
      * If this table is write-once/storage optimized, uses the string rep instead of the default map-based.
      */
-    private Item createRow(Item update) {
-        return new Item(update.getId(), update.value, SNAP);
+    private Item createSnapRow(Item update) {
+        return new Item(update.id(), update.value(), SNAP);
     }
 
-    /**
-     * Apply changes in an update to an existing row.
-     */
-    private void updateRow(Item update, Item row) {
-        row.value = update.value;
-    }
+//    /**
+//     * Apply changes in an update to an existing row.
+//     */
+//    private void updateRow(Item update, Item row) {
+//        row.value = update.value;
+//    }
 
 }
