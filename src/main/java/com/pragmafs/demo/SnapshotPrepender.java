@@ -288,28 +288,62 @@ public class SnapshotPrepender<T> {
     }
 
     public Flux<T> asFlux() {
-        Set<T> seenInSnapshot = ConcurrentHashMap.newKeySet();
+        Set<T> seen = ConcurrentHashMap.newKeySet();
+        Flux<T> cachedSnapshot = snapshot.cache();
+        Mono<Void> snapshotDone = cachedSnapshot.then().cache();
 
-        Flux<T> cachedSnapshotFlux = snapshot.cache(); // cache the snapshot stream
-        Mono<Void> snapshotCompletionSignal = cachedSnapshotFlux.then().cache();
+        ConnectableFlux<T> hotUpdates = updates.replay();
+        Disposable connection = hotUpdates.connect();
 
-        ConnectableFlux<T> hotUpdates = updates.replay(); // create a hot stream
-        Disposable connection = hotUpdates.connect();     // start the hot stream
+        Flux<T> snapshotPhase = cachedSnapshot
+                .filter(snapshotEventFilter)
+                .doOnNext(t -> {
+//                    logFirst("First snapshot", t, firstSnapshotLogged);
+                    if (skipIfSeenInSnapshot) seen.add(t);
+                })
+                .doOnComplete(() -> log.info("Snapshot completed"))
+                .doOnError(e -> log.error("Snapshot error", e));
 
-        Flux<T> snapshotPhase = afterSnapshotPhaseBuilt(buildSnapshotPhase(seenInSnapshot, cachedSnapshotFlux));
-        Flux<T> bufferedUpdates = afterBufferedUpdatesPhaseBuilt(buildBufferedUpdates(seenInSnapshot, hotUpdates, snapshotCompletionSignal));
-        Flux<T> liveUpdates = afterLiveUpdatesPhaseBuilt(buildLiveUpdates(seenInSnapshot, hotUpdates, snapshotCompletionSignal));
+        Flux<T> bufferedUpdates = hotUpdates
+                .takeUntilOther(snapshotDone)
+                .filter(t -> !skipIfSeenInSnapshot || !seen.contains(t))
+                .filter(updateEventFilter)
+                //.doOnNext(t -> logFirst("First buffered update", t, firstBufferedUpdateLogged))
+                .doOnComplete(() -> log.info("Buffered updates completed"))
+                .doOnError(e -> log.error("Buffered updates error", e));
 
-        Flux<T> merged = Flux.concat(snapshotPhase, bufferedUpdates, liveUpdates)
-                .doFinally(signalType -> {
-                    connection.dispose();
-                    log.info("SnapshotPrepender stream finished with signal: {}", signalType);
-                });
+        Flux<T> liveUpdates = hotUpdates
+                .skipUntilOther(snapshotDone)
+                .filter(t -> !skipIfSeenInSnapshot || !seen.contains(t))
+                .filter(updateEventFilter)
+                //.doOnNext(t -> logFirst("First live update", t, firstLiveUpdateLogged))
+                .doOnComplete(() -> log.info("Live updates completed"))
+                .doOnError(e -> log.error("Live updates error", e));
+
+        Flux<T> merged = Flux.concat(
+                afterSnapshotPhaseBuilt(snapshotPhase),
+                afterBufferedUpdatesPhaseBuilt(bufferedUpdates),
+                afterLiveUpdatesPhaseBuilt(liveUpdates)
+        ).doFinally(signal -> {
+            connection.dispose();
+            log.info("SnapshotPrepender finished with signal: {}", signal);
+        });
+
         return switch (backpressureStrategy) {
             case DROP -> merged.onBackpressureDrop();
             case BUFFER -> merged.onBackpressureBuffer();
             default -> merged.onBackpressureError();
         };
+    }
+
+    private final AtomicBoolean firstSnapshotLogged = new AtomicBoolean(false);
+    private final AtomicBoolean firstBufferedUpdateLogged = new AtomicBoolean(false);
+    private final AtomicBoolean firstLiveUpdateLogged = new AtomicBoolean(false);
+
+    private void logFirst(String message, T item, AtomicBoolean flag) {
+        if (flag.compareAndSet(false, true)) {
+            log.info("{}: {}", message, item);
+        }
     }
 
     private static final Logger log = LoggerFactory.getLogger(SnapshotPrepender.class);

@@ -16,6 +16,7 @@ public class SnapshotPrependerWithComposition {
         snapshotPrepender = SnapshotPrepender.<Item>builder()
                 .snapshot(snapshot) // Set the snapshot Flux
                 .updates(updates)   // Set the updates Flux
+                .skipIfSeenInSnapshot(true)
                 .build();
     }
 
