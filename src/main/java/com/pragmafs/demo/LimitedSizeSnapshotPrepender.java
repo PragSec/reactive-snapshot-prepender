@@ -17,8 +17,9 @@ public class LimitedSizeSnapshotPrepender extends SnapshotPrepender<Item> {
         super(snapshot,
                 updates,
                 BackpressureStrategy.BUFFER,
-                null,
-                false, null, null
+                false,
+                t -> true,
+                t -> true
         );
 
         super.setSnapshotFilter(new SnapshotFilterStrategy());

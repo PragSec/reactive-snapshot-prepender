@@ -62,7 +62,7 @@ public class DemoApplication implements CommandLineRunner {
 
 		// Pause to let the cache fill up - we start subscription sequence at some arbitrary point in the stream
 		Random random = new Random();
-		long sleepMillis = random.nextLong(1, 3);
+		long sleepMillis = random.nextLong(1, 5);
 		nap(sleepMillis);
 
 		log.info("Cache has {} items after {} millis sleep", cache.size(), sleepMillis);
@@ -73,7 +73,8 @@ public class DemoApplication implements CommandLineRunner {
 
 		startTime = System.nanoTime();
 
-		Flux<Item> merged = new LimitedSizeSnapshotPrependerWithComposition(snapshot, updates, 400_000).asFlux().doOnNext(this::checkForErrors);
+		//Flux<Item> merged = new LimitedSizeSnapshotPrependerWithComposition(snapshot, updates, 0).asFlux().doOnNext(this::checkForErrors);
+		Flux<Item> merged = new SnapshotPrependerWithComposition(snapshot, updates).asFlux().doOnNext(this::checkForErrors);
 
 //		Flux<Item> merged = SnapshotPrepender.<Item>builder()
 //				.snapshot(snapshot)
@@ -136,7 +137,7 @@ public class DemoApplication implements CommandLineRunner {
 		}
 		if (item.value() == COUNT) {
 			long endTime = System.nanoTime();
-			log.info("Elapsed = {}", (endTime - startTime)/1e6);
+			log.info("Elapsed = {} ms", (endTime - startTime)/1e6);
 			log.info("Last item was {}", lastUpdate);
 		}
 	}

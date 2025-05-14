@@ -3,13 +3,10 @@ package com.pragmafs.demo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Flux;
-import reactor.core.scheduler.Scheduler;
-import reactor.core.scheduler.Schedulers;
 
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
-import java.util.function.Supplier;
 
 // TODO - we could make workingSet a map from id to seqNum and skip omitting
 //   updates that are older tha the snapshot value
@@ -19,17 +16,17 @@ public class LimitedSizeSnapshotPrependerWithComposition {
     private final int maxSize;
     private final Set<String> workingSet;
 
+    /**
+     * Creates a LimitedSizeSnapshotPrependerWithComposition instance.
+     * @param snapshot Snapshot flux.
+     * @param updates Updates flux.
+     * @param maxSize Maximum size of the working set. if maxSize < 1, no limit is applied.
+     */
     public LimitedSizeSnapshotPrependerWithComposition(Flux<Item> snapshot, Flux<Item> updates, int maxSize) {
         snapshotPrepender = SnapshotPrepender.<Item>builder()
                 .snapshot(snapshot) // Set the snapshot Flux
                 .updates(updates)   // Set the updates Flux
-                .skipIfSeenInSnapshot(false) // do not skip if seen in snapshot
-                .snapshotSchedulerSupplier(new Supplier<Scheduler>() {
-                    @Override
-                    public Scheduler get() {
-                        return Schedulers.newSingle("snapshot-single-scheduler");
-                    }
-                })
+                .skipIfSeenInSnapshot(true)
                 .backpressure(SnapshotPrepender.BackpressureStrategy.BUFFER) // Set backpressure strategy
                 .snapshotEventFilter(new SnapshotFilterStrategy()) // Set snapshot filter, lambda work here just as well
                 .updateEventFilter(new UpdateFilterStrategy())     // Set update filter, lambda work here just as well
@@ -37,6 +34,10 @@ public class LimitedSizeSnapshotPrependerWithComposition {
 
         this.maxSize = maxSize;
         this.workingSet = ConcurrentHashMap.newKeySet();
+    }
+
+    public boolean hasNoSizeLimit() {
+        return maxSize < 1;
     }
 
     /**
@@ -50,7 +51,7 @@ public class LimitedSizeSnapshotPrependerWithComposition {
     private class SnapshotFilterStrategy implements Predicate<Item> {
         private static final Logger log = LoggerFactory.getLogger(SnapshotFilterStrategy.class);
         public boolean test(Item item) {
-            if (workingSet.size() < maxSize) {
+            if (hasNoSizeLimit() || workingSet.size() < maxSize) {
                 workingSet.add(item.id());
                 return true;
             }
@@ -71,7 +72,7 @@ public class LimitedSizeSnapshotPrependerWithComposition {
                 return true;
             }
 
-            if (workingSet.size() < maxSize) {
+            if (hasNoSizeLimit() || workingSet.size() < maxSize) {
                 workingSet.add(item.id());
                 return true;
             }
