@@ -11,12 +11,13 @@ public class SnapshotPrependerWithComposition {
      *
      * @param snapshot Snapshot flux.
      * @param updates  Updates flux.
+     * @param skipIfSeenInSnapshot If true, skip items that are already seen in the snapshot.
      */
-    public SnapshotPrependerWithComposition(Flux<Item> snapshot, Flux<Item> updates) {
+    public SnapshotPrependerWithComposition(Flux<Item> snapshot, Flux<Item> updates, boolean skipIfSeenInSnapshot) {
         snapshotPrepender = SnapshotPrepender.<Item>builder()
                 .snapshot(snapshot) // Set the snapshot Flux
                 .updates(updates)   // Set the updates Flux
-                .skipIfSeenInSnapshot(true)
+                .skipIfSeenInSnapshot(skipIfSeenInSnapshot)
                 .build();
     }
 

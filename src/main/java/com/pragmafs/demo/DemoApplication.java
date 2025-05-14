@@ -73,18 +73,7 @@ public class DemoApplication implements CommandLineRunner {
 
 		startTime = System.nanoTime();
 
-		//Flux<Item> merged = new LimitedSizeSnapshotPrependerWithComposition(snapshot, updates, 0).asFlux().doOnNext(this::checkForErrors);
-		Flux<Item> merged = new SnapshotPrependerWithComposition(snapshot, updates).asFlux().doOnNext(this::checkForErrors);
-
-//		Flux<Item> merged = SnapshotPrepender.<Item>builder()
-//				.snapshot(snapshot)
-//				.updates(updates)
-//				.backpressure(SnapshotPrepender.BackpressureStrategy.BUFFER)
-//				.skipIfSeenInSnapshot(true) // skip updates seen in snapshot
-//				.snapshotSchedulerSupplier(() -> Schedulers.newSingle("snapshot-scheduler"))
-//				.build()
-//				.asFlux()
-//				.doOnNext(this::checkForErrors);
+		Flux<Item> merged = new SnapshotPrependerWithComposition(snapshot, updates, true).asFlux().doOnNext(this::checkForErrors);
 
 		var subscription = merged.subscribe();
 
