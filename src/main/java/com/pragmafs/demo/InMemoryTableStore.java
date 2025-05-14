@@ -3,7 +3,6 @@ package com.pragmafs.demo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
 
 import java.util.Iterator;
 import java.util.Map;
@@ -37,19 +36,10 @@ public class InMemoryTableStore {
         this.allPartition = new Partition();
     }
 
-    Mono<Item> upsert(Item update) {
+    void upsert(Item update) {
         if (update == null)
-            return Mono.empty();
-
+            return;
         rows.merge(update.id(), createAndIndex(update), (oldItem, newItem) -> oldItem.withValue(newItem.value()));
-//
-//        Item row = rows.get(update.getId());
-//        if (row == null) {
-//            createAndIndex(update);
-//        } else {
-//            updateRow(update, row);
-//        }
-        return Mono.just(update);
     }
 
     Flux<Item> select() {
@@ -92,12 +82,4 @@ public class InMemoryTableStore {
     private Item createSnapRow(Item update) {
         return new Item(update.id(), update.value(), SNAP);
     }
-
-//    /**
-//     * Apply changes in an update to an existing row.
-//     */
-//    private void updateRow(Item update, Item row) {
-//        row.value = update.value;
-//    }
-
 }
