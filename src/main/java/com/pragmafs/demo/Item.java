@@ -4,7 +4,7 @@ import org.springframework.lang.NonNull;
 import java.util.Objects;
 
 public class Item {
-    private String id;
+    private final String id;
     private int value;
     private Source source;
 
@@ -18,10 +18,6 @@ public class Item {
 
     public String getId() {
         return id;
-    }
-
-    public void setId(String id) {
-        this.id = id;
     }
 
     public int getValue() {
