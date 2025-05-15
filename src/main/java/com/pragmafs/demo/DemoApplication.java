@@ -92,33 +92,24 @@ public class DemoApplication implements CommandLineRunner {
 	 */
 	private void checkForErrors(Item item) {
 		if (item.getSource() == SNAP) {
-			if (lastSnapshot == null) {
-				log.info("First snapshot is {}", item);
-			}
-
 			if (lastUpdate != null) {
 				log.warn(">>> Received snapshot {} after update {}", item, lastUpdate);
 			}
-
 			if (lastSnapshot == null || (lastSnapshot.getValue() < item.getValue())) {
 				lastSnapshot = item;
 			}
 		} else {
 			// UPDATE
-			//log.info("Update is {}", item);
-			// First update after snapshot
 			if (lastUpdate == null && lastSnapshot != null) {
 				log.info("Snapshot (last) is {}", lastSnapshot);
 				log.info("Update (first) is {}", item);
 				if (item.getValue() > lastSnapshot.getValue() + 1) {
 					log.warn(">>> GAP between last snapshot {} and first update {}", lastSnapshot, item);
 				}
- 			}  else if (lastUpdate == null) {	// first update, no snapshot
-				log.info("First update is {}", item);
-			} else if (item.getValue() != lastUpdate.getValue() + 1) {
+			}
+			if (lastUpdate != null && item.getValue() != lastUpdate.getValue() + 1) {
 				log.warn(">>> GAP between update {} and {}", lastUpdate, item);
 			}
-
 			lastUpdate = item;
 		}
 		if (item.getValue() % 10_000 == 0) {
@@ -126,7 +117,7 @@ public class DemoApplication implements CommandLineRunner {
 		}
 		if (item.getValue() == COUNT) {
 			long endTime = System.nanoTime();
-			log.info("Elapsed = {} ms", (endTime - startTime)/1e6);
+			log.info("Elapsed = {}", (endTime - startTime)/1e6);
 			log.info("Last item was {}", lastUpdate);
 		}
 	}
