@@ -8,6 +8,7 @@ import reactor.core.publisher.ConnectableFlux;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.util.Collections;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -163,13 +164,16 @@ public class SnapshotPrepender<T> {
     @NonNull
     protected Flux<T> buildSnapshotPhase(@NonNull Set<T> seenInSnapshot, @NonNull Flux<T> cachedSnapshotFlux) {
         AtomicBoolean firstSeen = new AtomicBoolean(false);
+
         return cachedSnapshotFlux
                 .filter(snapshotEventFilter)
                 .doOnNext(t -> {
                     if (firstSeen.compareAndSet(false, true)) {
                         log.info("First snapshot item: {}", t);
                     }
-                    if (skipIfSeenInSnapshot) seenInSnapshot.add(t);
+                    if (skipIfSeenInSnapshot) {
+                        seenInSnapshot.add(t);
+                    }
                 })
                 .doOnComplete(() ->
                         log.info("Snapshot completed")
@@ -288,7 +292,7 @@ public class SnapshotPrepender<T> {
     }
 
     public Flux<T> asFlux() {
-        Set<T> seen = ConcurrentHashMap.newKeySet();
+        Set<T> seen = skipIfSeenInSnapshot ?  ConcurrentHashMap.newKeySet() : Collections.emptySet();
         Flux<T> cachedSnapshot = snapshot.cache();
         Mono<Void> snapshotDone = cachedSnapshot.then().cache();
 
@@ -299,7 +303,9 @@ public class SnapshotPrepender<T> {
                 .filter(snapshotEventFilter)
                 .doOnNext(t -> {
 //                    logFirst("First snapshot", t, firstSnapshotLogged);
-                    if (skipIfSeenInSnapshot) seen.add(t);
+                    if (skipIfSeenInSnapshot) {
+                        seen.add(t);
+                    }
                 })
                 .doOnComplete(() -> log.info("Snapshot completed"))
                 .doOnError(e -> log.error("Snapshot error", e));

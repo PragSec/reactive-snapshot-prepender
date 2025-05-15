@@ -3,6 +3,7 @@ package com.pragmafs.demo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 import java.util.Iterator;
 import java.util.Map;
@@ -36,10 +37,16 @@ public class InMemoryTableStore {
         this.allPartition = new Partition();
     }
 
-    void upsert(Item update) {
+    Mono<Item> upsert(Item update) {
         if (update == null)
-            return;
-        rows.merge(update.id(), createAndIndex(update), (oldItem, newItem) -> oldItem.withValue(newItem.value()));
+             return Mono.empty();
+        Item row = rows.get(update.getId());
+        if (row == null) {
+            createAndIndex(update);
+        } else {
+            updateRow(update, row);
+        }
+        return Mono.just(update);
     }
 
     Flux<Item> select() {
@@ -69,17 +76,24 @@ public class InMemoryTableStore {
     /**
      * Creates and a new row for the given update and indexes it.
      */
-    private Item createAndIndex(Item update) {
-        Item row = createSnapRow(update);
+    private void createAndIndex(Item update) {
+        Item row = createRow(update);
+        rows.put(row.getId(), row);
         allPartition.add(row);
-        return row;
     }
 
     /**
      * Create a new Item to represent the update.
      * If this table is write-once/storage optimized, uses the string rep instead of the default map-based.
      */
-    private Item createSnapRow(Item update) {
-        return new Item(update.id(), update.value(), SNAP);
+    private Item createRow(Item update) {
+        return new Item(update.getId(), update.getValue(), SNAP);
+    }
+
+    /**
+     * Apply changes in an update to an existing row.
+     */
+    private void updateRow(Item update, Item row) {
+        row.setValue(update.getValue());
     }
 }

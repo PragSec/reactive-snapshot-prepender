@@ -91,7 +91,7 @@ public class DemoApplication implements CommandLineRunner {
 	 * Also logs progress (every 10,000th emitted item), and check
 	 */
 	private void checkForErrors(Item item) {
-		if (item.source() == SNAP) {
+		if (item.getSource() == SNAP) {
 			if (lastSnapshot == null) {
 				log.info("First snapshot is {}", item);
 			}
@@ -100,7 +100,7 @@ public class DemoApplication implements CommandLineRunner {
 				log.warn(">>> Received snapshot {} after update {}", item, lastUpdate);
 			}
 
-			if (lastSnapshot == null || (lastSnapshot.value() < item.value())) {
+			if (lastSnapshot == null || (lastSnapshot.getValue() < item.getValue())) {
 				lastSnapshot = item;
 			}
 		} else {
@@ -110,21 +110,21 @@ public class DemoApplication implements CommandLineRunner {
 			if (lastUpdate == null && lastSnapshot != null) {
 				log.info("Snapshot (last) is {}", lastSnapshot);
 				log.info("Update (first) is {}", item);
-				if (item.value() > lastSnapshot.value() + 1) {
+				if (item.getValue() > lastSnapshot.getValue() + 1) {
 					log.warn(">>> GAP between last snapshot {} and first update {}", lastSnapshot, item);
 				}
  			}  else if (lastUpdate == null) {	// first update, no snapshot
 				log.info("First update is {}", item);
-			} else if (item.value() != lastUpdate.value() + 1) {
+			} else if (item.getValue() != lastUpdate.getValue() + 1) {
 				log.warn(">>> GAP between update {} and {}", lastUpdate, item);
 			}
 
 			lastUpdate = item;
 		}
-		if (item.value() % 10_000 == 0) {
+		if (item.getValue() % 10_000 == 0) {
 			log.info("Merged {}", item);
 		}
-		if (item.value() == COUNT) {
+		if (item.getValue() == COUNT) {
 			long endTime = System.nanoTime();
 			log.info("Elapsed = {} ms", (endTime - startTime)/1e6);
 			log.info("Last item was {}", lastUpdate);

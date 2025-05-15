@@ -52,7 +52,7 @@ public class LimitedSizeSnapshotPrependerWithComposition {
         private static final Logger log = LoggerFactory.getLogger(SnapshotFilterStrategy.class);
         public boolean test(Item item) {
             if (hasNoSizeLimit() || workingSet.size() < maxSize) {
-                workingSet.add(item.id());
+                workingSet.add(item.getId());
                 return true;
             }
             log.info("Snapshot filter: workingSet is full: {}, item {} not added", workingSet.size(), item);
@@ -63,17 +63,17 @@ public class LimitedSizeSnapshotPrependerWithComposition {
     private class UpdateFilterStrategy implements Predicate<Item> {
         private static final Logger log = LoggerFactory.getLogger(UpdateFilterStrategy.class);
         public boolean test(Item item) {
-            if (item.value() == -1) {
+            if (item.getValue() == -1) {
                 log.info("Update filter: item {} removed", item);
-                return workingSet.remove(item.id());
+                return workingSet.remove(item.getId());
             }
 
-            if (workingSet.contains(item.id())) {
+            if (workingSet.contains(item.getId())) {
                 return true;
             }
 
             if (hasNoSizeLimit() || workingSet.size() < maxSize) {
-                workingSet.add(item.id());
+                workingSet.add(item.getId());
                 return true;
             }
             log.info("Update filter: workingSet is full: {}, item {} not added", workingSet.size(), item);

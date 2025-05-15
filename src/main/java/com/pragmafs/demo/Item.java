@@ -1,35 +1,60 @@
 package com.pragmafs.demo;
 
-import reactor.util.annotation.NonNull;
+import org.springframework.lang.NonNull;
+import java.util.Objects;
 
-record Item(String id, int value, Source source) {
+public class Item {
+    private String id;
+    private int value;
+    private Source source;
 
     public enum Source { SNAP, UPDATE }
 
-    @NonNull
-    public Item withValue(int newValue) {
-        return new Item(this.id, newValue, this.source);
+    public Item(String id, int value, Source source) {
+        this.id = Objects.requireNonNull(id);
+        this.source = Objects.requireNonNull(source);
+        this.value = value;
     }
 
-    @NonNull
-    public Item withValueAndSource(int newValue, Source source) {
-        return new Item(this.id, newValue, source);
+    public String getId() {
+        return id;
     }
 
+    public void setId(String id) {
+        this.id = id;
+    }
+
+    public int getValue() {
+        return value;
+    }
+
+    public void setValue(int value) {
+        this.value = value;
+    }
+
+    public Source getSource() {
+        return source;
+    }
+
+    public void setSource(Source source) {
+        this.source = source;
+    }
 
     @Override
-     @NonNull
-     public String toString() {
+    @NonNull
+    public String toString() {
         return String.format("Item{id='%s', value=%d, source=%s}", id, value, source);
     }
 
     @Override
     public boolean equals(Object o) {
-        return this == o || (o instanceof Item item && id.equals(item.id) && value == item.value);
+        if (this == o) return true;
+        if (!(o instanceof Item item)) return false;
+        return Objects.equals(id, item.id) && value == item.value ;
     }
 
     @Override
     public int hashCode() {
-        return id.hashCode() * 31 + Integer.hashCode(value);
+        return Objects.hash(id, value);
     }
 }
