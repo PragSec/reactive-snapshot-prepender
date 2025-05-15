@@ -12,7 +12,6 @@ import java.util.Collections;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
 
 /**
@@ -134,12 +133,12 @@ public class SnapshotPrepender<T> {
     /**
      * Private constructor to prevent instantiation without using the builder.
      *
-     * @param snapshot                  Snapshot stream. This is a cold stream that will be streamed before the updates stream.
-     * @param updates                   Updates stream. This is a hot stream that will be streamed after the snapshot stream.
-     * @param backpressureStrategy      Backpressure strategy. Default is BUFFER.
-     * @param skipIfSeenInSnapshot      If true, skip update stream items that were seen in the snapshot phase. Default is false.
-     * @param snapshotEventFilter       Filter for snapshot events. Default is no filter.
-     * @param updateEventFilter         Filter for update events. Default is no filter.
+     * @param snapshot             Snapshot stream. This is a cold stream that will be streamed before the updates stream.
+     * @param updates              Updates stream. This is a hot stream that will be streamed after the snapshot stream.
+     * @param backpressureStrategy Backpressure strategy. Default is BUFFER.
+     * @param skipIfSeenInSnapshot If true, skip update stream items that were seen in the snapshot phase. Default is false.
+     * @param snapshotEventFilter  Filter for snapshot events. Default is no filter.
+     * @param updateEventFilter    Filter for update events. Default is no filter.
      */
     protected SnapshotPrepender(@NonNull Flux<T> snapshot,
                                 @NonNull Flux<T> updates,
@@ -153,89 +152,6 @@ public class SnapshotPrepender<T> {
         this.skipIfSeenInSnapshot = skipIfSeenInSnapshot;
         this.snapshotEventFilter = snapshotEventFilter;
         this.updateEventFilter = updateEventFilter;
-    }
-
-    /**
-     * Builds the snapshot phase.
-     *
-     * @param seenInSnapshot Set of items seen in the snapshot phase. This is used to skip items that were seen in the snapshot phase if skipping is enabled.
-     * @return The snapshot phase.
-     */
-    @NonNull
-    protected Flux<T> buildSnapshotPhase(@NonNull Set<T> seenInSnapshot, @NonNull Flux<T> cachedSnapshotFlux) {
-        AtomicBoolean firstSeen = new AtomicBoolean(false);
-
-        return cachedSnapshotFlux
-                .filter(snapshotEventFilter)
-                .doOnNext(t -> {
-                    if (firstSeen.compareAndSet(false, true)) {
-                        log.info("First snapshot item: {}", t);
-                    }
-                    if (skipIfSeenInSnapshot) {
-                        seenInSnapshot.add(t);
-                    }
-                })
-                .doOnComplete(() ->
-                        log.info("Snapshot completed")
-                ).doOnError(e ->
-                        log.error("Snapshot error", e)
-                );
-    }
-
-    /**
-     * Builds the buffered updates phase. This phase takes items from the updates stream UNTIL the snapshot phase is completed.
-     *
-     * @param seenInSnapshot           Set of items seen in the snapshot phase. This is used to skip items that were seen in the snapshot phase if skipping is enabled.
-     * @param hotUpdates               The hot updates stream. This will be streamed after the snapshot stream.
-     * @param snapshotCompletionSignal The completion signal of the snapshot phase. This is used to determine when to stop taking items from the updates stream.
-     * @return The buffered updates phase.
-     */
-    @NonNull
-    protected Flux<T> buildBufferedUpdates(@NonNull Set<T> seenInSnapshot, @NonNull Flux<T> hotUpdates, @NonNull Mono<Void> snapshotCompletionSignal) {
-        AtomicBoolean firstSeen = new AtomicBoolean(false);
-        return hotUpdates
-                // take events until the snapshot phase is completed
-                // .takeUntilOther(snapshot.ignoreElements().then())
-                .takeUntilOther(snapshotCompletionSignal)
-                .filter(t -> !skipIfSeenInSnapshot || !seenInSnapshot.contains(t))
-                .filter(updateEventFilter)
-                .doOnNext(t -> {
-                    if (firstSeen.compareAndSet(false, true)) {
-                        log.info("First buffered update item: {}", t);
-                    }
-                }).doOnComplete(() ->
-                        log.info("Buffered updates completed")
-                ).doOnError(e ->
-                        log.error("Buffered updates error", e)
-                );
-    }
-
-    /**
-     * Builds the live updates phase. This phase takes items from the updates stream AFTER the snapshot phase is completed.
-     *
-     * @param seenInSnapshot           Set of items seen in the snapshot phase. This is used to skip items that were seen in the snapshot phase if skipping is enabled.
-     * @param hotUpdates               The hot updates stream. This will be streamed after the snapshot stream.
-     * @param snapshotCompletionSignal The completion signal of the snapshot phase. This is used to determine when to start taking items from the updates stream.
-     * @return The live updates phase.
-     */
-    @NonNull
-    protected Flux<T> buildLiveUpdates(@NonNull Set<T> seenInSnapshot, @NonNull Flux<T> hotUpdates, @NonNull Mono<Void> snapshotCompletionSignal) {
-        AtomicBoolean firstSeen = new AtomicBoolean(false);
-        return hotUpdates
-                // skip events until the snapshot phase is completed
-                //.skipUntilOther(snapshot.ignoreElements().then())
-                .skipUntilOther(snapshotCompletionSignal)
-                .filter(t -> !skipIfSeenInSnapshot || !seenInSnapshot.contains(t))
-                .filter(updateEventFilter)
-                .doOnNext(t -> {
-                    if (firstSeen.compareAndSet(false, true)) {
-                        log.info("First live update item: {}", t);
-                    }
-                }).doOnComplete(() ->
-                        log.info("Live updates completed")
-                ).doOnError(e ->
-                        log.error("Live updates error", e)
-                );
     }
 
     /**
@@ -292,7 +208,7 @@ public class SnapshotPrepender<T> {
     }
 
     public Flux<T> asFlux() {
-        Set<T> seen = skipIfSeenInSnapshot ?  ConcurrentHashMap.newKeySet() : Collections.emptySet();
+        Set<T> seen = skipIfSeenInSnapshot ? ConcurrentHashMap.newKeySet() : Collections.emptySet();
         Flux<T> cachedSnapshot = snapshot.cache();
         Mono<Void> snapshotDone = cachedSnapshot.then().cache();
 
@@ -302,7 +218,6 @@ public class SnapshotPrepender<T> {
         Flux<T> snapshotPhase = cachedSnapshot
                 .filter(snapshotEventFilter)
                 .doOnNext(t -> {
-//                    logFirst("First snapshot", t, firstSnapshotLogged);
                     if (skipIfSeenInSnapshot) {
                         seen.add(t);
                     }
@@ -314,7 +229,6 @@ public class SnapshotPrepender<T> {
                 .takeUntilOther(snapshotDone)
                 .filter(t -> !skipIfSeenInSnapshot || !seen.contains(t))
                 .filter(updateEventFilter)
-                //.doOnNext(t -> logFirst("First buffered update", t, firstBufferedUpdateLogged))
                 .doOnComplete(() -> log.info("Buffered updates completed"))
                 .doOnError(e -> log.error("Buffered updates error", e));
 
@@ -322,7 +236,6 @@ public class SnapshotPrepender<T> {
                 .skipUntilOther(snapshotDone)
                 .filter(t -> !skipIfSeenInSnapshot || !seen.contains(t))
                 .filter(updateEventFilter)
-                //.doOnNext(t -> logFirst("First live update", t, firstLiveUpdateLogged))
                 .doOnComplete(() -> log.info("Live updates completed"))
                 .doOnError(e -> log.error("Live updates error", e));
 
@@ -342,15 +255,6 @@ public class SnapshotPrepender<T> {
         };
     }
 
-    private final AtomicBoolean firstSnapshotLogged = new AtomicBoolean(false);
-    private final AtomicBoolean firstBufferedUpdateLogged = new AtomicBoolean(false);
-    private final AtomicBoolean firstLiveUpdateLogged = new AtomicBoolean(false);
-
-    private void logFirst(String message, T item, AtomicBoolean flag) {
-        if (flag.compareAndSet(false, true)) {
-            log.info("{}: {}", message, item);
-        }
-    }
 
     private static final Logger log = LoggerFactory.getLogger(SnapshotPrepender.class);
 
