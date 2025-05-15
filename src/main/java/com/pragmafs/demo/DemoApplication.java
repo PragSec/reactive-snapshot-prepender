@@ -61,11 +61,7 @@ public class DemoApplication implements CommandLineRunner {
 
 
 		// Pause to let the cache fill up - we start subscription sequence at some arbitrary point in the stream
-		Random random = new Random();
-		long sleepMillis = random.nextLong(1, 5);
-		nap(sleepMillis);
-
-		log.info("Cache has {} items after {} millis sleep", cache.size(), sleepMillis);
+		nap(1);
 
 		Flux<Item> snapshot = cache.select();
 
