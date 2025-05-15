@@ -37,16 +37,15 @@ public class InMemoryTableStore {
         this.allPartition = new Partition();
     }
 
-    Mono<Item> upsert(Item update) {
+   void upsert(Item update) {
         if (update == null)
-             return Mono.empty();
+             return;
         Item row = rows.get(update.getId());
         if (row == null) {
             createAndIndex(update);
         } else {
             updateRow(update, row);
         }
-        return Mono.just(update);
     }
 
     Flux<Item> select() {

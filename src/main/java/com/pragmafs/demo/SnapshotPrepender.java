@@ -222,21 +222,29 @@ public class SnapshotPrepender<T> {
                         seen.add(t);
                     }
                 })
-                .doOnComplete(() -> log.info("Snapshot completed"))
+                .doOnComplete(() ->
+                        log.info("Snapshot completed")
+                )
                 .doOnError(e -> log.error("Snapshot error", e));
 
         Flux<T> bufferedUpdates = hotUpdates
                 .takeUntilOther(snapshotDone)
                 .filter(t -> !skipIfSeenInSnapshot || !seen.contains(t))
                 .filter(updateEventFilter)
-                .doOnComplete(() -> log.info("Buffered updates completed"))
+                .doOnComplete(() -> {
+                    log.info("Buffered updates completed");
+                    if (skipIfSeenInSnapshot) {
+                        seen.clear();
+                    }
+                })
                 .doOnError(e -> log.error("Buffered updates error", e));
 
         Flux<T> liveUpdates = hotUpdates
                 .skipUntilOther(snapshotDone)
-                .filter(t -> !skipIfSeenInSnapshot || !seen.contains(t))
                 .filter(updateEventFilter)
-                .doOnComplete(() -> log.info("Live updates completed"))
+                .doOnComplete(() ->
+                        log.info("Live updates completed")
+                )
                 .doOnError(e -> log.error("Live updates error", e));
 
         Flux<T> merged = Flux.concat(
