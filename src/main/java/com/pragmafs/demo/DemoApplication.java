@@ -87,11 +87,11 @@ public class DemoApplication implements CommandLineRunner {
 	 * Also logs progress (every 10,000th emitted item), and check
 	 */
 	private void checkForErrors(Item item) {
-		if (item.getSource() == SNAP) {
+		if (item.source == SNAP) {
 			if (lastUpdate != null) {
 				log.warn(">>> Received snapshot {} after update {}", item, lastUpdate);
 			}
-			if (lastSnapshot == null || (lastSnapshot.getValue() < item.getValue())) {
+			if (lastSnapshot == null || (lastSnapshot.value < item.value)) {
 				lastSnapshot = item;
 			}
 		} else {
@@ -99,19 +99,19 @@ public class DemoApplication implements CommandLineRunner {
 			if (lastUpdate == null && lastSnapshot != null) {
 				log.info("Snapshot (last) is {}", lastSnapshot);
 				log.info("Update (first) is {}", item);
-				if (item.getValue() > lastSnapshot.getValue() + 1) {
+				if (item.value > lastSnapshot.value + 1) {
 					log.warn(">>> GAP between last snapshot {} and first update {}", lastSnapshot, item);
 				}
 			}
-			if (lastUpdate != null && item.getValue() != lastUpdate.getValue() + 1) {
+			if (lastUpdate != null && item.value != lastUpdate.value + 1) {
 				log.warn(">>> GAP between update {} and {}", lastUpdate, item);
 			}
 			lastUpdate = item;
 		}
-		if (item.getValue() % 10_000 == 0) {
+		if (item.value % 10_000 == 0) {
 			log.info("Merged {}", item);
 		}
-		if (item.getValue() == COUNT) {
+		if (item.value == COUNT) {
 			long endTime = System.nanoTime();
 			log.info("Elapsed = {}", (endTime - startTime)/1e6);
 			log.info("Last item was {}", lastUpdate);

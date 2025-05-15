@@ -32,7 +32,7 @@ public class LimitedSizeSnapshotPrepender extends SnapshotPrepender<Item> {
     private class SnapshotFilterStrategy implements Predicate<Item> {
         public boolean test(Item item) {
             if (workingSet.size() < maxSize) {
-                workingSet.add(item.getId());
+                workingSet.add(item.id);
                 return true;
             }
             return false;
@@ -41,16 +41,16 @@ public class LimitedSizeSnapshotPrepender extends SnapshotPrepender<Item> {
 
     private class UpdateFilterStrategy implements Predicate<Item> {
         public boolean test(Item item) {
-            if (item.getValue() == -1) {
-                return workingSet.remove(item.getId());
+            if (item.value == -1) {
+                return workingSet.remove(item.id);
             }
 
-            if (workingSet.contains(item.getId())) {
+            if (workingSet.contains(item.id)) {
                 return true;
             }
 
             if (workingSet.size() < maxSize) {
-                workingSet.add(item.getId());
+                workingSet.add(item.id);
                 return true;
             }
             return false;
