@@ -42,6 +42,7 @@ public class SnapshotPrepender<T> {
         private BackpressureStrategy backpressureStrategy = BackpressureStrategy.BUFFER;
         private boolean skipIfSeenInSnapshot = false;
         private Predicate<T> snapshotEventFilter = t -> true;
+        private Predicate<T> bufferedUpdateEventFilter = t -> true;
         private Predicate<T> updateEventFilter = t -> true;
 
         /**
@@ -91,22 +92,33 @@ public class SnapshotPrepender<T> {
         /**
          * Sets the snapshot event filter.
          *
-         * @param snapshotEventFilter Filter for snapshot events.
+         * @param filter Filter for snapshot events.
          * @return this
          */
-        public Builder<T> snapshotEventFilter(Predicate<T> snapshotEventFilter) {
-            this.snapshotEventFilter = snapshotEventFilter;
+        public Builder<T> snapshotEventFilter(Predicate<T> filter) {
+            this.snapshotEventFilter = filter;
+            return this;
+        }
+
+        /**
+         * Sets the buffered update event filter.
+         *
+         * @param filter Filter for buffered update events.
+         * @return this
+         */
+        public Builder<T> bufferedUpdateEventFilter(Predicate<T> filter) {
+            this.bufferedUpdateEventFilter = filter;
             return this;
         }
 
         /**
          * Sets the update event filter.
          *
-         * @param updateEventFilter Filter for update events.
+         * @param filter Filter for update events.
          * @return this
          */
-        public Builder<T> updateEventFilter(Predicate<T> updateEventFilter) {
-            this.updateEventFilter = updateEventFilter;
+        public Builder<T> updateEventFilter(Predicate<T> filter) {
+            this.updateEventFilter = filter;
             return this;
         }
 
@@ -118,7 +130,7 @@ public class SnapshotPrepender<T> {
         public SnapshotPrepender<T> build() {
             Objects.requireNonNull(snapshot, "Snapshot stream must not be null");
             Objects.requireNonNull(updates, "Updates stream must not be null");
-            return new SnapshotPrepender<>(snapshot, updates, backpressureStrategy, skipIfSeenInSnapshot, snapshotEventFilter, updateEventFilter);
+            return new SnapshotPrepender<>(snapshot, updates, backpressureStrategy, skipIfSeenInSnapshot, snapshotEventFilter, bufferedUpdateEventFilter, updateEventFilter);
         }
     }
 
@@ -133,30 +145,33 @@ public class SnapshotPrepender<T> {
     /**
      * Private constructor to prevent instantiation without using the builder.
      *
-     * @param snapshot             Snapshot stream. This is a cold stream that will be streamed before the updates stream.
-     * @param updates              Updates stream. This is a hot stream that will be streamed after the snapshot stream.
-     * @param backpressureStrategy Backpressure strategy. Default is BUFFER.
-     * @param skipIfSeenInSnapshot If true, skip update stream items that were seen in the snapshot phase. Default is false.
-     * @param snapshotEventFilter  Filter for snapshot events. Default is no filter.
-     * @param updateEventFilter    Filter for update events. Default is no filter.
+     * @param snapshot                  Snapshot stream. This is a cold stream that will be streamed before the updates stream.
+     * @param updates                   Updates stream. This is a hot stream that will be streamed after the snapshot stream.
+     * @param backpressureStrategy      Backpressure strategy. Default is BUFFER.
+     * @param skipIfSeenInSnapshot      If true, skip update stream items that were seen in the snapshot phase. Default is false.
+     * @param snapshotEventFilter       Filter for snapshot events. Default is no filter.
+     * @param bufferedUpdateEventFilter Filter for buffered update events. Default is no filter.
+     * @param updateEventFilter         Filter for update events. Default is no filter.
      */
     protected SnapshotPrepender(@NonNull Flux<T> snapshot,
                                 @NonNull Flux<T> updates,
                                 BackpressureStrategy backpressureStrategy,
                                 boolean skipIfSeenInSnapshot,
                                 Predicate<T> snapshotEventFilter,
+                                Predicate<T> bufferedUpdateEventFilter,
                                 Predicate<T> updateEventFilter) {
         this.snapshot = snapshot;
         this.updates = updates;
         this.backpressureStrategy = backpressureStrategy;
         this.skipIfSeenInSnapshot = skipIfSeenInSnapshot;
         this.snapshotEventFilter = snapshotEventFilter;
+        this.bufferedUpdateEventFilter = bufferedUpdateEventFilter;
         this.updateEventFilter = updateEventFilter;
     }
 
     /**
-     * This method is called after the snapshot phase is built, but before the updates are added.
-     * It allows subclasses to modify the snapshot phase before it is concatenated with the updates.
+     * This method is called after the snapshot phase is built.
+     * It allows subclasses to modify the snapshot phase.
      *
      * @param snapshotPhase The snapshot phase built from the snapshot stream.
      * @return The modified snapshot phase.
@@ -167,8 +182,8 @@ public class SnapshotPrepender<T> {
     }
 
     /**
-     * This method is called after the buffered updates phase is built, but before the live updates are added.
-     * It allows subclasses to modify the buffered updates phase before it is concatenated with the live updates.
+     * This method is called after the buffered updates phase is built.
+     * It allows subclasses to modify the buffered updates phase.
      *
      * @param bufferedUpdatesPhase The buffered updates phase built from the updates stream.
      * @return The modified buffered updates phase.
@@ -179,7 +194,8 @@ public class SnapshotPrepender<T> {
     }
 
     /**
-     * This method is called after the live updates phase is built. It allows subclasses to modify the live updates phase before it is concatenated with the live updates.
+     * This method is called after the live updates phase is built.
+     * It allows subclasses to modify the live updates phase.
      *
      * @param liveUpdatesPhase The buffered updates phase built from the updates stream.
      * @return The modified buffered updates phase.
@@ -196,6 +212,15 @@ public class SnapshotPrepender<T> {
      */
     protected void setSnapshotFilter(Predicate<T> filter) {
         this.snapshotEventFilter = filter != null ? filter : t -> true;
+    }
+
+    /**
+     * Sets the buffered update filter. This is used to filter items in the buffered updates phase.
+     *
+     * @param filter The filter to use for the buffered updates phase.
+     */
+    protected void setBufferedUpdateFilter(Predicate<T> filter) {
+        this.bufferedUpdateEventFilter = filter != null ? filter : t -> true;
     }
 
     /**
@@ -230,7 +255,7 @@ public class SnapshotPrepender<T> {
         Flux<T> bufferedUpdates = hotUpdates
                 .takeUntilOther(snapshotDone)
                 .filter(t -> !skipIfSeenInSnapshot || !seen.contains(t))
-                .filter(updateEventFilter)
+                .filter(bufferedUpdateEventFilter)
                 .doOnComplete(() -> {
                     log.info("Buffered updates completed");
                     if (skipIfSeenInSnapshot) {
@@ -271,6 +296,7 @@ public class SnapshotPrepender<T> {
     private final BackpressureStrategy backpressureStrategy;
     private final boolean skipIfSeenInSnapshot;
     private volatile Predicate<T> snapshotEventFilter;
+    private volatile Predicate<T> bufferedUpdateEventFilter;
     private volatile Predicate<T> updateEventFilter;
 }
 

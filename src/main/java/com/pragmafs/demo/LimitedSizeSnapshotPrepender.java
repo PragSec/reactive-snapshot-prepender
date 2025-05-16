@@ -19,10 +19,12 @@ public class LimitedSizeSnapshotPrepender extends SnapshotPrepender<Item> {
                 BackpressureStrategy.BUFFER,
                 false,
                 t -> true,
+                t -> true,
                 t -> true
         );
 
         super.setSnapshotFilter(new SnapshotFilterStrategy());
+        super.setBufferedUpdateFilter(new UpdateFilterStrategy());
         super.setUpdateFilter(new UpdateFilterStrategy());
 
         this.maxSize = maxSize;
@@ -57,3 +59,5 @@ public class LimitedSizeSnapshotPrepender extends SnapshotPrepender<Item> {
         }
     }
 }
+
+
