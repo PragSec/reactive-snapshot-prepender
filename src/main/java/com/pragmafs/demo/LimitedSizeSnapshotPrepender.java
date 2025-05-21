@@ -14,14 +14,7 @@ public class LimitedSizeSnapshotPrepender extends SnapshotPrepender<Item> {
     private final Set<String> workingSet;
 
     public LimitedSizeSnapshotPrepender(Flux<Item> snapshot, Flux<Item> updates, int maxSize) {
-        super(snapshot,
-                updates,
-                BackpressureStrategy.BUFFER,
-                false,
-                t -> true,
-                t -> true,
-                t -> true
-        );
+        super(snapshot, updates);
 
         super.setSnapshotFilter(new SnapshotFilterStrategy());
         super.setBufferedUpdateFilter(new UpdateFilterStrategy());

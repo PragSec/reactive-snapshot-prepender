@@ -7,7 +7,7 @@ public class SnapshotPrependerWithComposition {
     private final SnapshotPrepender<Item> snapshotPrepender;
 
     /**
-     * Creates a LimitedSizeSnapshotPrependerWithComposition instance.
+     * Creates a SnapshotPrependerWithComposition instance.
      *
      * @param snapshot Snapshot flux.
      * @param updates  Updates flux.

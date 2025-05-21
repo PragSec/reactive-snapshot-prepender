@@ -10,6 +10,7 @@ import reactor.core.publisher.Mono;
 
 import java.util.Collections;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
@@ -41,9 +42,9 @@ public class SnapshotPrepender<T> {
         private Flux<T> updates;
         private BackpressureStrategy backpressureStrategy = BackpressureStrategy.BUFFER;
         private boolean skipIfSeenInSnapshot = false;
-        private Predicate<T> snapshotEventFilter = t -> true;
-        private Predicate<T> bufferedUpdateEventFilter = t -> true;
-        private Predicate<T> updateEventFilter = t -> true;
+        private Predicate<T> snapshotEventFilter;
+        private Predicate<T> bufferedUpdateEventFilter;
+        private Predicate<T> updateEventFilter;
 
         /**
          * Sets the snapshot stream. This is a cold stream that will be connected to the updates stream.
@@ -143,7 +144,17 @@ public class SnapshotPrepender<T> {
     }
 
     /**
-     * Private constructor to prevent instantiation without using the builder.
+     * Protected ctor.
+     * @param snapshot                  Snapshot stream. This is a cold stream that will be streamed before the updates stream.
+     * @param updates                   Updates stream. This is a hot stream that will be streamed after the snapshot stream.
+     */
+    protected SnapshotPrepender(@NonNull Flux<T> snapshot,
+                                @NonNull Flux<T> updates) {
+        this(snapshot, updates, BackpressureStrategy.ERROR, false, null, null, null);
+    }
+
+    /**
+     * Protected constructor to prevent instantiation without using the builder.
      *
      * @param snapshot                  Snapshot stream. This is a cold stream that will be streamed before the updates stream.
      * @param updates                   Updates stream. This is a hot stream that will be streamed after the snapshot stream.
@@ -164,9 +175,9 @@ public class SnapshotPrepender<T> {
         this.updates = updates;
         this.backpressureStrategy = backpressureStrategy;
         this.skipIfSeenInSnapshot = skipIfSeenInSnapshot;
-        this.snapshotEventFilter = snapshotEventFilter;
-        this.bufferedUpdateEventFilter = bufferedUpdateEventFilter;
-        this.updateEventFilter = updateEventFilter;
+        this.snapshotEventFilter = Optional.ofNullable(snapshotEventFilter);
+        this.bufferedUpdateEventFilter = Optional.ofNullable(bufferedUpdateEventFilter);
+        this.updateEventFilter = Optional.ofNullable(updateEventFilter);
     }
 
     /**
@@ -211,7 +222,7 @@ public class SnapshotPrepender<T> {
      * @param filter The filter to use for the snapshot phase.
      */
     protected void setSnapshotFilter(Predicate<T> filter) {
-        this.snapshotEventFilter = filter != null ? filter : t -> true;
+        this.snapshotEventFilter = Optional.ofNullable(filter);
     }
 
     /**
@@ -220,7 +231,7 @@ public class SnapshotPrepender<T> {
      * @param filter The filter to use for the buffered updates phase.
      */
     protected void setBufferedUpdateFilter(Predicate<T> filter) {
-        this.bufferedUpdateEventFilter = filter != null ? filter : t -> true;
+        this.bufferedUpdateEventFilter = Optional.ofNullable(filter);
     }
 
     /**
@@ -229,7 +240,7 @@ public class SnapshotPrepender<T> {
      * @param filter The filter to use for the updates phase.
      */
     protected void setUpdateFilter(Predicate<T> filter) {
-        this.updateEventFilter = filter != null ? filter : t -> true;
+        this.updateEventFilter = Optional.ofNullable(filter);
     }
 
     public Flux<T> asFlux() {
@@ -241,7 +252,6 @@ public class SnapshotPrepender<T> {
         Disposable connection = hotUpdates.connect();
 
         Flux<T> snapshotPhase = cachedSnapshot
-                .filter(snapshotEventFilter)
                 .doOnNext(t -> {
                     if (skipIfSeenInSnapshot) {
                         seen.add(t);
@@ -251,11 +261,13 @@ public class SnapshotPrepender<T> {
                         log.info("Snapshot completed")
                 )
                 .doOnError(e -> log.error("Snapshot error", e));
+        if (snapshotEventFilter.isPresent()) {
+            snapshotPhase = snapshot.filter(snapshotEventFilter.orElseThrow());
+        }
 
         Flux<T> bufferedUpdates = hotUpdates
                 .takeUntilOther(snapshotDone)
                 .filter(t -> !skipIfSeenInSnapshot || !seen.contains(t))
-                .filter(bufferedUpdateEventFilter)
                 .doOnComplete(() -> {
                     log.info("Buffered updates completed");
                     if (skipIfSeenInSnapshot) {
@@ -263,14 +275,19 @@ public class SnapshotPrepender<T> {
                     }
                 })
                 .doOnError(e -> log.error("Buffered updates error", e));
+        if (bufferedUpdateEventFilter.isPresent()) {
+            bufferedUpdates = bufferedUpdates.filter(bufferedUpdateEventFilter.orElseThrow());
+        }
 
         Flux<T> liveUpdates = hotUpdates
                 .skipUntilOther(snapshotDone)
-                .filter(updateEventFilter)
                 .doOnComplete(() ->
                         log.info("Live updates completed")
                 )
                 .doOnError(e -> log.error("Live updates error", e));
+        if (updateEventFilter.isPresent()) {
+            liveUpdates = liveUpdates.filter(updateEventFilter.orElseThrow());
+        }
 
         Flux<T> merged = Flux.concat(
                 afterSnapshotPhaseBuilt(snapshotPhase),
@@ -295,9 +312,9 @@ public class SnapshotPrepender<T> {
     private final Flux<T> updates;
     private final BackpressureStrategy backpressureStrategy;
     private final boolean skipIfSeenInSnapshot;
-    private volatile Predicate<T> snapshotEventFilter;
-    private volatile Predicate<T> bufferedUpdateEventFilter;
-    private volatile Predicate<T> updateEventFilter;
+    private volatile Optional<Predicate<T>> snapshotEventFilter;
+    private volatile Optional<Predicate<T>> bufferedUpdateEventFilter;
+    private volatile Optional<Predicate<T>> updateEventFilter;
 }
 
 

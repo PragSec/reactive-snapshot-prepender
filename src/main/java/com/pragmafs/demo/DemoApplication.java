@@ -69,7 +69,7 @@ public class DemoApplication implements CommandLineRunner {
 
 		startTime = System.nanoTime();
 
-		Flux<Item> merged = new SnapshotPrependerWithComposition(snapshot, updates, true).asFlux().doOnNext(this::checkForErrors);
+		Flux<Item> merged = new SnapshotPrependerWithComposition(snapshot, updates, false).asFlux().doOnNext(this::checkForErrors);
 
 		var subscription = merged.subscribe();
 
