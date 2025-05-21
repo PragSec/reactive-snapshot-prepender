@@ -129,8 +129,6 @@ public class SnapshotPrepender<T> {
          * @return SnapshotPrepender instance.
          */
         public SnapshotPrepender<T> build() {
-            Objects.requireNonNull(snapshot, "Snapshot stream must not be null");
-            Objects.requireNonNull(updates, "Updates stream must not be null");
             return new SnapshotPrepender<>(snapshot, updates, backpressureStrategy, skipIfSeenInSnapshot, snapshotEventFilter, bufferedUpdateEventFilter, updateEventFilter);
         }
     }
@@ -150,7 +148,7 @@ public class SnapshotPrepender<T> {
      */
     protected SnapshotPrepender(@NonNull Flux<T> snapshot,
                                 @NonNull Flux<T> updates) {
-        this(snapshot, updates, BackpressureStrategy.ERROR, false, null, null, null);
+        this(snapshot, updates, BackpressureStrategy.BUFFER, false, null, null, null);
     }
 
     /**
@@ -171,6 +169,9 @@ public class SnapshotPrepender<T> {
                                 Predicate<T> snapshotEventFilter,
                                 Predicate<T> bufferedUpdateEventFilter,
                                 Predicate<T> updateEventFilter) {
+        Objects.requireNonNull(snapshot, "Snapshot stream must not be null");
+        Objects.requireNonNull(updates, "Updates stream must not be null");
+        Objects.requireNonNull(backpressureStrategy, "Backpressure strategy must not be null");
         this.snapshot = snapshot;
         this.updates = updates;
         this.backpressureStrategy = backpressureStrategy;
