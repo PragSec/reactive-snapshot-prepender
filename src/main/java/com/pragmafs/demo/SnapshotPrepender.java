@@ -143,8 +143,9 @@ public class SnapshotPrepender<T> {
 
     /**
      * Protected ctor.
-     * @param snapshot                  Snapshot stream. This is a cold stream that will be streamed before the updates stream.
-     * @param updates                   Updates stream. This is a hot stream that will be streamed after the snapshot stream.
+     *
+     * @param snapshot Snapshot stream. This is a cold stream that will be streamed before the updates stream.
+     * @param updates  Updates stream. This is a hot stream that will be streamed after the snapshot stream.
      */
     protected SnapshotPrepender(@NonNull Flux<T> snapshot,
                                 @NonNull Flux<T> updates) {
@@ -267,8 +268,14 @@ public class SnapshotPrepender<T> {
         }
 
         Flux<T> bufferedUpdates = hotUpdates
-                .takeUntilOther(snapshotDone)
-                .filter(t -> !skipIfSeenInSnapshot || !seen.contains(t))
+                .takeUntilOther(snapshotDone);
+        if (skipIfSeenInSnapshot) {
+            bufferedUpdates = bufferedUpdates.filter(t -> !seen.contains(t));
+        }
+        if (bufferedUpdateEventFilter.isPresent()) {
+            bufferedUpdates = bufferedUpdates.filter(bufferedUpdateEventFilter.orElseThrow());
+        }
+        bufferedUpdates = bufferedUpdates
                 .doOnComplete(() -> {
                     log.info("Buffered updates completed");
                     if (skipIfSeenInSnapshot) {
@@ -276,19 +283,19 @@ public class SnapshotPrepender<T> {
                     }
                 })
                 .doOnError(e -> log.error("Buffered updates error", e));
-        if (bufferedUpdateEventFilter.isPresent()) {
-            bufferedUpdates = bufferedUpdates.filter(bufferedUpdateEventFilter.orElseThrow());
-        }
+
 
         Flux<T> liveUpdates = hotUpdates
-                .skipUntilOther(snapshotDone)
+                .skipUntilOther(snapshotDone);
+        if (updateEventFilter.isPresent()) {
+            liveUpdates = liveUpdates.filter(updateEventFilter.orElseThrow());
+        }
+        liveUpdates = liveUpdates
                 .doOnComplete(() ->
                         log.info("Live updates completed")
                 )
                 .doOnError(e -> log.error("Live updates error", e));
-        if (updateEventFilter.isPresent()) {
-            liveUpdates = liveUpdates.filter(updateEventFilter.orElseThrow());
-        }
+
 
         Flux<T> merged = Flux.concat(
                 afterSnapshotPhaseBuilt(snapshotPhase),
