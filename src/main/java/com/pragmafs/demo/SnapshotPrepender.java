@@ -253,64 +253,78 @@ public class SnapshotPrepender<T> {
         ConnectableFlux<T> hotUpdates = updates.replay();
         Disposable connection = hotUpdates.connect();
 
+        // Snapshot phase
         Flux<T> snapshotPhase = cachedSnapshot
-                .doOnNext(t -> {
+                .doOnSubscribe(s -> {
+                    log.info("** Snapshot phase subscribed");
+                }).doOnNext(t -> {
                     if (skipIfSeenInSnapshot) {
                         seen.add(t);
                     }
                 })
                 .doOnComplete(() ->
-                        log.info("Snapshot completed")
+                        log.info("** Snapshot completed")
                 )
-                .doOnError(e -> log.error("Snapshot error", e));
+                .doOnError(e -> log.error("** Snapshot error", e));
         if (snapshotEventFilter.isPresent()) {
             snapshotPhase = snapshot.filter(snapshotEventFilter.orElseThrow());
         }
 
-        Flux<T> bufferedUpdates = hotUpdates
+        // Buffered updates phase
+        Flux<T> bufferedUpdatesPhase = hotUpdates
                 .takeUntilOther(snapshotDone);
         if (skipIfSeenInSnapshot) {
-            bufferedUpdates = bufferedUpdates.filter(t -> !seen.contains(t));
+            bufferedUpdatesPhase = bufferedUpdatesPhase.filter(t -> !seen.contains(t));
         }
         if (bufferedUpdateEventFilter.isPresent()) {
-            bufferedUpdates = bufferedUpdates.filter(bufferedUpdateEventFilter.orElseThrow());
+            bufferedUpdatesPhase = bufferedUpdatesPhase.filter(bufferedUpdateEventFilter.orElseThrow());
         }
-        bufferedUpdates = bufferedUpdates
+        bufferedUpdatesPhase = bufferedUpdatesPhase
+                .doOnSubscribe(s -> {
+                    log.info("** Buffered updates phase subscribed");
+                })
                 .doOnComplete(() -> {
-                    log.info("Buffered updates completed");
+                    log.info("** Buffered updates completed");
                     if (skipIfSeenInSnapshot) {
                         seen.clear();
                     }
                 })
-                .doOnError(e -> log.error("Buffered updates error", e));
+                .doOnError(e -> log.error("** Buffered updates error", e));
 
-
-        Flux<T> liveUpdates = hotUpdates
+        // Live updates phase
+        Flux<T> liveUpdatesPhase = hotUpdates
                 .skipUntilOther(snapshotDone);
         if (updateEventFilter.isPresent()) {
-            liveUpdates = liveUpdates.filter(updateEventFilter.orElseThrow());
+            liveUpdatesPhase = liveUpdatesPhase.filter(updateEventFilter.orElseThrow());
         }
-        liveUpdates = liveUpdates
-                .doOnComplete(() ->
-                        log.info("Live updates completed")
-                )
-                .doOnError(e -> log.error("Live updates error", e));
 
-
-        Flux<T> merged = Flux.concat(
-                afterSnapshotPhaseBuilt(snapshotPhase),
-                afterBufferedUpdatesPhaseBuilt(bufferedUpdates),
-                afterLiveUpdatesPhaseBuilt(liveUpdates)
-        ).doFinally(signal -> {
-            connection.dispose();
-            log.info("SnapshotPrepender finished with signal: {}", signal);
-        });
-
-        return switch (backpressureStrategy) {
-            case DROP -> merged.onBackpressureDrop();
-            case BUFFER -> merged.onBackpressureBuffer();
-            default -> merged.onBackpressureError();
+        liveUpdatesPhase = switch (backpressureStrategy) {
+            case ERROR -> liveUpdatesPhase.onBackpressureError();
+            case LATEST -> liveUpdatesPhase.onBackpressureLatest();
+            case BUFFER -> liveUpdatesPhase.onBackpressureBuffer(1000);
+            case DROP -> liveUpdatesPhase.onBackpressureDrop(
+                    dropped -> log.warn("** Dropped event due to backpressure: {}", dropped));
         };
+        liveUpdatesPhase = liveUpdatesPhase
+                .doOnSubscribe(s -> {
+                    log.info("** Updates phase subscribed");
+                })
+                .doOnComplete(() ->
+                        log.info("** Live updates completed")
+                )
+                .doOnError(e -> log.error("** Live updates error", e));
+
+        // Concatenate the three phases
+        return Flux.concat(
+                        afterSnapshotPhaseBuilt(snapshotPhase),
+                        afterBufferedUpdatesPhaseBuilt(bufferedUpdatesPhase),
+                        afterLiveUpdatesPhaseBuilt(liveUpdatesPhase)
+                )
+                .doOnError(e -> log.error("** Concatenated flux error", e))
+                .doFinally(signal -> {
+                    connection.dispose();
+                    log.info("** SnapshotPrepender finished with signal: {}", signal);
+                });
     }
 
 
